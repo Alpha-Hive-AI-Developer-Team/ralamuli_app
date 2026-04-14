@@ -191,7 +191,6 @@ class _QuizBanner extends StatelessWidget {
           width: double.infinity,
           height: 220.h,
           decoration: BoxDecoration(
-            // 👇 IMPORTANT: use transparent color for blur effect
             color: AppColors.background.withOpacity(0.6),
 
             borderRadius: BorderRadius.circular(14.r),

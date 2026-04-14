@@ -29,7 +29,7 @@ class SettingsScreen extends ConsumerWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   // ── App Bar ───────────────────────────────────────────
-                  HelpingAppBar(title: "Setting"),
+                  HelpingAppBar(title: "Settings"),
                   SizedBox(height: 24.h),
 
                   Expanded(

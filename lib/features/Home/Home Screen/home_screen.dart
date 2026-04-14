@@ -50,7 +50,7 @@ class HomeScreen extends ConsumerWidget {
 
                         _StartLearningBanner(),
 
-                        SizedBox(height: 80.h), // 👈 space for button
+                        SizedBox(height: 80.h),
                       ],
                     ),
                   ),
@@ -91,11 +91,7 @@ class _AppBar extends ConsumerWidget {
           onTap: () {
             context.push(AppRoutes.settings);
           },
-          child: Icon(
-            Icons.settings_outlined,
-            size: 24.sp,
-            color: AppColors.bodyText,
-          ),
+          child: Image.asset(setting, width: 24.w, height: 24.h),
         ),
       ],
     );
@@ -123,14 +119,11 @@ class _LanguageSelectorRow extends ConsumerWidget {
         ),
         SizedBox(width: 12.w),
 
-        IconButton(
-          onPressed: notifier.swapLanguages,
-          icon: Icon(
-            Icons.swap_horiz_rounded,
-            color: AppColors.bodyText,
-            size: 30.sp,
-          ),
+        GestureDetector(
+          onTap: notifier.swapLanguages,
+          child: Image.asset(exchange, width: 24.w, height: 24.h),
         ),
+
         SizedBox(width: 12.w),
         // Target language dropdown button
         Expanded(
@@ -280,11 +273,7 @@ class _InputCardState extends ConsumerState<_InputCard> {
             Positioned(
               right: 0,
               bottom: 0,
-              child: Icon(
-                Icons.mic_none_rounded,
-                size: 24.sp,
-                color: AppColors.bodyText_light,
-              ),
+              child: Image.asset(microphone, width: 24.w, height: 24.h),
             ),
           ],
         ),
@@ -328,7 +317,7 @@ class _SwapDivider extends ConsumerWidget {
                   valueColor: AlwaysStoppedAnimation<Color>(AppColors.primary),
                 ),
               )
-            : Icon(Icons.swap_vert_rounded, size: 25.sp, color: arrowColor),
+            : Image.asset(translate, width: 24.w, height: 24.h),
 
         SizedBox(width: 10.w), // spacing
 
@@ -352,13 +341,13 @@ class _OutputCard extends ConsumerWidget {
         state.status == TranslationStatus.success &&
         state.translatedText.isNotEmpty;
 
+    final bool isLoading = state.status == TranslationStatus.loading;
+
     return Container(
       width: double.infinity,
       constraints: BoxConstraints(minHeight: 200.h),
       decoration: BoxDecoration(
-        color: isError
-            ? AppColors.errorWithOpacity(0.04)
-            : AppColors.background,
+        color: AppColors.background,
         border: Border.all(
           color: isError ? AppColors.error : AppColors.borderGrey,
           width: 1,
@@ -367,65 +356,71 @@ class _OutputCard extends ConsumerWidget {
       ),
       child: Padding(
         padding: EdgeInsets.all(14.w),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+        child: Stack(
           children: [
-            // Content
-            if (isError)
-              Text(
-                'Translation not available',
-                style: AppTextStyles.bodyLG.copyWith(color: AppColors.error),
-              )
-            else if (hasResult)
-              Text(
-                state.translatedText,
-                style: AppTextStyles.bodyLG.copyWith(color: AppColors.bodyText),
-              )
-            else
-              Text(
-                'Translation will appear here.',
-                style: AppTextStyles.bodyLG.copyWith(color: AppColors.hintText),
+            Padding(
+              padding: EdgeInsets.only(bottom: 28.h),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Content
+                  if (isError)
+                    Text(
+                      'Translation not available',
+                      style: AppTextStyles.bodyLG.copyWith(
+                        color: AppColors.error,
+                      ),
+                    )
+                  else if (hasResult)
+                    Text(
+                      state.translatedText,
+                      style: AppTextStyles.bodyLG.copyWith(
+                        color: AppColors.bodyText,
+                      ),
+                    )
+                  else if (isLoading)
+                    Text(
+                      'Loading...',
+                      style: AppTextStyles.bodyLG.copyWith(
+                        color: AppColors.hintText,
+                      ),
+                    )
+                  else
+                    Text(
+                      'Translation will appear here.',
+                      style: AppTextStyles.bodyLG.copyWith(
+                        color: AppColors.hintText,
+                      ),
+                    ),
+                ],
               ),
-
-            // Copy icon at bottom-right (when there's a result)
-            if (hasResult || isError) ...[
-              SizedBox(height: 12.h),
-              Align(
-                alignment: Alignment.bottomRight,
-                child: GestureDetector(
-                  onTap: hasResult
-                      ? () {
-                          Clipboard.setData(
-                            ClipboardData(text: state.translatedText),
-                          );
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(
-                              content: Text('Copied to clipboard'),
-                              duration: Duration(seconds: 1),
-                            ),
-                          );
-                        }
-                      : null,
-                  child: Icon(
-                    Icons.copy_outlined,
-                    size: 20.sp,
-                    color: hasResult
-                        ? AppColors.bodyText_light
-                        : Colors.transparent,
-                  ),
-                ),
-              ),
-            ] else ...[
-              SizedBox(height: 12.h),
-              Align(
-                alignment: Alignment.bottomRight,
+            ),
+            Positioned(
+              right: 0,
+              bottom: 0,
+              child: GestureDetector(
+                onTap: hasResult
+                    ? () {
+                        Clipboard.setData(
+                          ClipboardData(text: state.translatedText),
+                        );
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text('Copied to clipboard'),
+                            duration: Duration(seconds: 1),
+                          ),
+                        );
+                      }
+                    : null,
                 child: Icon(
                   Icons.copy_outlined,
                   size: 20.sp,
-                  color: Colors.transparent, // invisible placeholder
+                  color: hasResult
+                      ? AppColors.bodyText_light
+                      : Colors.transparent,
                 ),
               ),
-            ],
+            ),
           ],
         ),
       ),
@@ -456,8 +451,8 @@ class _StartLearningBanner extends ConsumerWidget {
                   begin: Alignment.topCenter,
                   end: Alignment.bottomCenter,
                   colors: [
-                    Color(0xFFD8C9FF).withOpacity(0.7),
-                    Color(0xFF6938EF).withOpacity(0.3),
+                    Color(0xFFD8C9FF).withOpacity(0.5),
+                    Color(0xFF6938EF).withOpacity(0.2),
                   ],
                 ),
                 borderRadius: BorderRadius.circular(12.r),
