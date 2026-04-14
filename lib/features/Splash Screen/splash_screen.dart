@@ -66,7 +66,7 @@ class _SplashScreenState extends ConsumerState<SplashScreen>
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Image.asset(logo, width: 127.w, height: 126.h),
+              Image.asset(logo, width: 135.w, height: 61.h),
               SizedBox(height: 25.h),
               Text(
                 "Ralamuli Translator",

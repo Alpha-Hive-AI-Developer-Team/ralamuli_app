@@ -80,7 +80,7 @@ class _AppBar extends ConsumerWidget {
     return Row(
       children: [
         // Logo icon
-        Image.asset(logo, width: 32.w, height: 32.h),
+        Image.asset(logo, width: 60.w, height: 27.h),
         SizedBox(width: ScreenUtils.md),
         Text(
           'Ralamuli Translator',
