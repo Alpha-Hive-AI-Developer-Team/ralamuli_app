@@ -264,48 +264,47 @@ class _WordCard extends ConsumerWidget {
       ),
       child: Column(
         children: [
-          // ── Image ─────────────────────────────────────────────────
-          ClipRRect(
-            borderRadius: BorderRadius.only(
-              topLeft: Radius.circular(16.r),
-              topRight: Radius.circular(16.r),
-            ),
-            child: Image.network(
-              word.imageUrl,
-              width: double.infinity,
-              height: 210.h,
-              fit: BoxFit.cover,
-              loadingBuilder: (context, child, loadingProgress) {
-                if (loadingProgress == null) return child;
-                return Container(
-                  width: double.infinity,
-                  height: 160.h,
-                  color: AppColors.secondarySurface,
-                  child: Center(
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      valueColor: AlwaysStoppedAnimation<Color>(
-                        AppColors.primary,
-                      ),
-                    ),
-                  ),
-                );
-              },
-              errorBuilder: (context, error, stackTrace) {
-                return Container(
-                  width: double.infinity,
-                  height: 160.h,
-                  color: AppColors.secondarySurface,
-                  child: Icon(
-                    Icons.image_outlined,
-                    size: 36.sp,
-                    color: AppColors.bodyText_light,
-                  ),
-                );
-              },
-            ),
-          ),
-
+          // // ── Image ─────────────────────────────────────────────────
+          // ClipRRect(
+          //   borderRadius: BorderRadius.only(
+          //     topLeft: Radius.circular(16.r),
+          //     topRight: Radius.circular(16.r),
+          //   ),
+          //   child: Image.network(
+          //     word.imageUrl,
+          //     width: double.infinity,
+          //     height: 210.h,
+          //     fit: BoxFit.cover,
+          //     loadingBuilder: (context, child, loadingProgress) {
+          //       if (loadingProgress == null) return child;
+          //       return Container(
+          //         width: double.infinity,
+          //         height: 160.h,
+          //         color: AppColors.secondarySurface,
+          //         child: Center(
+          //           child: CircularProgressIndicator(
+          //             strokeWidth: 2,
+          //             valueColor: AlwaysStoppedAnimation<Color>(
+          //               AppColors.primary,
+          //             ),
+          //           ),
+          //         ),
+          //       );
+          //     },
+          //     errorBuilder: (context, error, stackTrace) {
+          //       return Container(
+          //         width: double.infinity,
+          //         height: 160.h,
+          //         color: AppColors.secondarySurface,
+          //         child: Icon(
+          //           Icons.image_outlined,
+          //           size: 36.sp,
+          //           color: AppColors.bodyText_light,
+          //         ),
+          //       );
+          //     },
+          //   ),
+          // ),
           Container(
             margin: EdgeInsets.only(bottom: 20.h),
             decoration: BoxDecoration(

@@ -1,4 +1,5 @@
 import 'package:flutter_riverpod/legacy.dart';
+import 'package:ralamuli_translator/core/data/translation_entries.dart';
 import 'package:ralamuli_translator/features/Home/Model/home_model.dart';
 
 final translatorProvider =
@@ -9,16 +10,11 @@ final translatorProvider =
 class TranslatorNotifier extends StateNotifier<TranslatorState> {
   TranslatorNotifier() : super(const TranslatorState());
 
-  static const List<String> availableLanguages = [
-    'English',
-    'Español',
-    'Ralamuli',
-  ];
+  static const List<String> availableLanguages = AppLanguages.all;
 
   void updateInputText(String text) {
     state = state.copyWith(
       inputText: text,
-      // Reset translation when input changes
       translatedText: '',
       status: TranslationStatus.idle,
     );
@@ -33,14 +29,14 @@ class TranslatorNotifier extends StateNotifier<TranslatorState> {
   }
 
   void swapLanguages() {
-    state = state.copyWith(
+    state = _buildSyncedState(
+      previousState: state,
       sourceLanguage: state.targetLanguage,
       targetLanguage: state.sourceLanguage,
-      inputText: state.translatedText,
-      translatedText: state.inputText,
-      status: state.translatedText.isNotEmpty
-          ? TranslationStatus.success
-          : TranslationStatus.idle,
+      fallbackInputText: state.translatedText.isNotEmpty
+          ? state.translatedText
+          : state.inputText,
+      fallbackTranslatedText: state.inputText,
     );
   }
 
@@ -53,58 +49,110 @@ class TranslatorNotifier extends StateNotifier<TranslatorState> {
   }
 
   void selectLanguage(String language) {
+    var nextSourceLanguage = state.sourceLanguage;
+    var nextTargetLanguage = state.targetLanguage;
+
     if (state.isSelectingSource) {
-      // Prevent same language on both sides
       if (language == state.targetLanguage) {
-        state = state.copyWith(
-          sourceLanguage: language,
-          targetLanguage: state.sourceLanguage,
-          isDropdownOpen: false,
-        );
-      } else {
-        state = state.copyWith(sourceLanguage: language, isDropdownOpen: false);
+        nextTargetLanguage = state.sourceLanguage;
       }
+      nextSourceLanguage = language;
     } else {
       if (language == state.sourceLanguage) {
-        state = state.copyWith(
-          targetLanguage: language,
-          sourceLanguage: state.targetLanguage,
-          isDropdownOpen: false,
-        );
-      } else {
-        state = state.copyWith(targetLanguage: language, isDropdownOpen: false);
+        nextSourceLanguage = state.targetLanguage;
       }
+      nextTargetLanguage = language;
     }
+
+    state = _buildSyncedState(
+      previousState: state,
+      sourceLanguage: nextSourceLanguage,
+      targetLanguage: nextTargetLanguage,
+      closeDropdown: true,
+    );
   }
 
   Future<void> translate() async {
-    if (state.inputText.trim().isEmpty) return;
+    final input = state.inputText.trim();
+    if (input.isEmpty) return;
 
     state = state.copyWith(status: TranslationStatus.loading);
 
-    // Simulate API call
-    await Future.delayed(const Duration(milliseconds: 1500));
+    await Future.delayed(const Duration(milliseconds: 450));
 
-    // Mock translation logic
-    final mockTranslations = {
-      'water': "ba'",
-      'hello': 'kéachi',
-      'sun': 'rayénali',
-    };
+    final entry = findTranslationEntry(
+      language: state.sourceLanguage,
+      text: input,
+    );
 
-    final key = state.inputText.trim().toLowerCase();
-    final result = mockTranslations[key];
-
-    if (result != null) {
+    if (entry != null) {
       state = state.copyWith(
-        translatedText: result,
+        inputText: entry.textForLanguage(state.sourceLanguage),
+        translatedText: entry.textForLanguage(state.targetLanguage),
         status: TranslationStatus.success,
       );
-    } else {
-      state = state.copyWith(
-        translatedText: '',
-        status: TranslationStatus.error,
+      return;
+    }
+
+    state = state.copyWith(
+      translatedText: '',
+      status: TranslationStatus.error,
+    );
+  }
+
+  TranslatorState _buildSyncedState({
+    required TranslatorState previousState,
+    required String sourceLanguage,
+    required String targetLanguage,
+    bool closeDropdown = false,
+    String? fallbackInputText,
+    String? fallbackTranslatedText,
+  }) {
+    final matchedEntry = _resolveCurrentEntry(previousState);
+
+    if (matchedEntry != null) {
+      return previousState.copyWith(
+        sourceLanguage: sourceLanguage,
+        targetLanguage: targetLanguage,
+        inputText: matchedEntry.textForLanguage(sourceLanguage),
+        translatedText: matchedEntry.textForLanguage(targetLanguage),
+        status: TranslationStatus.success,
+        isDropdownOpen: closeDropdown ? false : previousState.isDropdownOpen,
       );
     }
+
+    final nextInputText =
+        fallbackInputText ??
+        (sourceLanguage == previousState.sourceLanguage
+            ? previousState.inputText
+            : '');
+
+    return previousState.copyWith(
+      sourceLanguage: sourceLanguage,
+      targetLanguage: targetLanguage,
+      inputText: nextInputText,
+      translatedText: fallbackTranslatedText ?? '',
+      status: TranslationStatus.idle,
+      isDropdownOpen: closeDropdown ? false : previousState.isDropdownOpen,
+    );
+  }
+
+  TranslationEntry? _resolveCurrentEntry(TranslatorState currentState) {
+    final fromInput = findTranslationEntry(
+      language: currentState.sourceLanguage,
+      text: currentState.inputText,
+    );
+    if (fromInput != null) {
+      return fromInput;
+    }
+
+    if (currentState.translatedText.trim().isEmpty) {
+      return null;
+    }
+
+    return findTranslationEntry(
+      language: currentState.targetLanguage,
+      text: currentState.translatedText,
+    );
   }
 }

@@ -186,16 +186,30 @@ class _InputCard extends ConsumerStatefulWidget {
 }
 
 class _InputCardState extends ConsumerState<_InputCard> {
-  late TextEditingController _controller;
+  late final TextEditingController _controller;
+  late final FocusNode _focusNode;
 
   @override
   void initState() {
     super.initState();
     _controller = TextEditingController();
+    _focusNode = FocusNode();
+
+    ref.listenManual(translatorProvider, (_, next) {
+      if (_controller.text == next.inputText) {
+        return;
+      }
+
+      _controller.value = TextEditingValue(
+        text: next.inputText,
+        selection: TextSelection.collapsed(offset: next.inputText.length),
+      );
+    });
   }
 
   @override
   void dispose() {
+    _focusNode.dispose();
     _controller.dispose();
     super.dispose();
   }
@@ -204,14 +218,6 @@ class _InputCardState extends ConsumerState<_InputCard> {
   Widget build(BuildContext context) {
     final state = ref.watch(translatorProvider);
     final notifier = ref.read(translatorProvider.notifier);
-
-    // Sync controller with state (e.g., after swap)
-    if (_controller.text != state.inputText) {
-      _controller.text = state.inputText;
-      _controller.selection = TextSelection.fromPosition(
-        TextPosition(offset: state.inputText.length),
-      );
-    }
 
     return Container(
       width: double.infinity,
@@ -234,12 +240,13 @@ class _InputCardState extends ConsumerState<_InputCard> {
                     Expanded(
                       child: TextField(
                         controller: _controller,
+                        focusNode: _focusNode,
                         onChanged: notifier.updateInputText,
                         style: AppTextStyles.bodyLG.copyWith(
                           color: AppColors.bodyText,
                         ),
                         decoration: InputDecoration(
-                          hintText: 'Enter text',
+                          hintText: 'Enter text in ${state.sourceLanguage}',
                           hintStyle: AppTextStyles.bodyLG.copyWith(
                             color: AppColors.hintText,
                           ),
@@ -366,7 +373,7 @@ class _OutputCard extends ConsumerWidget {
                   // Content
                   if (isError)
                     Text(
-                      'Translation not available',
+                      'Translation not available for ${state.sourceLanguage} to ${state.targetLanguage}.',
                       style: AppTextStyles.bodyLG.copyWith(
                         color: AppColors.error,
                       ),
@@ -387,7 +394,7 @@ class _OutputCard extends ConsumerWidget {
                     )
                   else
                     Text(
-                      'Translation will appear here.',
+                      'Translation in ${state.targetLanguage} will appear here.',
                       style: AppTextStyles.bodyLG.copyWith(
                         color: AppColors.hintText,
                       ),

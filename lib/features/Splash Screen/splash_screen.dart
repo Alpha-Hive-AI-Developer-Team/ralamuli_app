@@ -33,8 +33,11 @@ class _SplashScreenState extends ConsumerState<SplashScreen>
       curve: Curves.easeOutBack,
     );
 
-    // Start animation immediately on first frame
-    _controller.forward();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        _controller.forward(from: 0);
+      }
+    });
 
     // Navigate after splash duration
     Future.delayed(const Duration(seconds: 3), () {
