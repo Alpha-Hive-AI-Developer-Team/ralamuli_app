@@ -5,12 +5,16 @@ import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:go_router/go_router.dart';
 import 'package:ralamuli_translator/core/Routes/app_routes.dart';
 import 'package:ralamuli_translator/core/Utils/app_strings.dart';
+import 'package:ralamuli_translator/core/database/dictionary_repository.dart';
 import 'package:ralamuli_translator/core/Utils/screen_utils.dart';
 import 'package:ralamuli_translator/core/theme/app-colors.dart';
 import 'package:ralamuli_translator/core/theme/text_styles.dart';
 import 'package:ralamuli_translator/features/Home/Home%20Provider/home_notifier.dart';
 import 'package:ralamuli_translator/features/Home/Model/home_model.dart';
 import 'package:ralamuli_translator/features/Widgets/AppScaffold.dart';
+import 'package:speech_to_text/speech_recognition_error.dart';
+import 'package:speech_to_text/speech_recognition_result.dart';
+import 'package:speech_to_text/speech_to_text.dart';
 
 class HomeScreen extends ConsumerWidget {
   const HomeScreen({super.key});
@@ -18,6 +22,7 @@ class HomeScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final translatorState = ref.watch(translatorProvider);
+    ref.watch(dictionaryInitializationProvider);
 
     return AppScaffold(
       child: SafeArea(
@@ -252,7 +257,7 @@ class _InputCardState extends ConsumerState<_InputCard> {
                           ),
                           border: InputBorder.none,
                           isDense: true,
-                          contentPadding: EdgeInsets.zero,
+                          contentPadding: EdgeInsets.only(bottom: 32.h),
                         ),
                         maxLines: null,
                         textInputAction: TextInputAction.newline,
@@ -280,7 +285,40 @@ class _InputCardState extends ConsumerState<_InputCard> {
             Positioned(
               right: 0,
               bottom: 0,
-              child: Image.asset(microphone, width: 24.w, height: 24.h),
+              child: GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: () async {
+                  _focusNode.unfocus();
+
+                  final recognizedText = await showDialog<String>(
+                    context: context,
+                    barrierDismissible: true,
+                    builder: (_) => const _SpeechToTextDialog(),
+                  );
+
+                  if (!mounted || recognizedText == null) {
+                    return;
+                  }
+
+                  final trimmedText = recognizedText.trim();
+                  if (trimmedText.isEmpty) {
+                    return;
+                  }
+
+                  notifier.updateInputText(trimmedText);
+                  _controller.value = TextEditingValue(
+                    text: trimmedText,
+                    selection: TextSelection.collapsed(
+                      offset: trimmedText.length,
+                    ),
+                  );
+                  _focusNode.requestFocus();
+                },
+                child: Padding(
+                  padding: EdgeInsets.all(4.w),
+                  child: Image.asset(microphone, width: 24.w, height: 24.h),
+                ),
+              ),
             ),
           ],
         ),
@@ -342,6 +380,7 @@ class _OutputCard extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final state = ref.watch(translatorProvider);
+    final databaseInitialization = ref.watch(dictionaryInitializationProvider);
 
     final bool isError = state.status == TranslationStatus.error;
     final bool hasResult =
@@ -349,6 +388,7 @@ class _OutputCard extends ConsumerWidget {
         state.translatedText.isNotEmpty;
 
     final bool isLoading = state.status == TranslationStatus.loading;
+    final bool isDatabaseLoading = databaseInitialization.isLoading;
 
     return Container(
       width: double.infinity,
@@ -388,6 +428,13 @@ class _OutputCard extends ConsumerWidget {
                   else if (isLoading)
                     Text(
                       'Loading...',
+                      style: AppTextStyles.bodyLG.copyWith(
+                        color: AppColors.hintText,
+                      ),
+                    )
+                  else if (isDatabaseLoading)
+                    Text(
+                      'Preparing dictionary...',
                       style: AppTextStyles.bodyLG.copyWith(
                         color: AppColors.hintText,
                       ),
@@ -516,10 +563,12 @@ class _TranslateButton extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final state = ref.watch(translatorProvider);
     final notifier = ref.read(translatorProvider.notifier);
+    final databaseInitialization = ref.watch(dictionaryInitializationProvider);
 
     final bool isLoading = state.status == TranslationStatus.loading;
     final bool hasInput = state.inputText.trim().isNotEmpty;
-    final bool isEnabled = hasInput && !isLoading;
+    final bool isEnabled =
+        hasInput && !isLoading && !databaseInitialization.isLoading;
 
     return SizedBox(
       width: double.infinity,
@@ -538,7 +587,11 @@ class _TranslateButton extends ConsumerWidget {
           ),
         ),
         child: Text(
-          isLoading ? 'Translate...' : 'Translate',
+          isLoading
+              ? 'Translate...'
+              : databaseInitialization.isLoading
+              ? 'Preparing...'
+              : 'Translate',
           style: AppTextStyles.buttonLG.copyWith(
             color: isEnabled ? Colors.white : AppColors.bodyText_light,
           ),
@@ -645,6 +698,221 @@ class _DropdownItem extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+}
+
+class _SpeechToTextDialog extends StatefulWidget {
+  const _SpeechToTextDialog();
+
+  @override
+  State<_SpeechToTextDialog> createState() => _SpeechToTextDialogState();
+}
+
+class _SpeechToTextDialogState extends State<_SpeechToTextDialog> {
+  final SpeechToText _speech = SpeechToText();
+
+  bool _isAvailable = false;
+  bool _isListening = false;
+  String _recognizedText = '';
+  String? _errorMessage;
+
+  @override
+  void initState() {
+    super.initState();
+    _startListeningFlow();
+  }
+
+  @override
+  void dispose() {
+    _speech.stop();
+    super.dispose();
+  }
+
+  Future<void> _startListeningFlow() async {
+    final isAvailable = await _speech.initialize(
+      onStatus: _handleStatus,
+      onError: _handleError,
+    );
+
+    if (!mounted) {
+      return;
+    }
+
+    setState(() {
+      _isAvailable = isAvailable;
+      _errorMessage = isAvailable
+          ? null
+          : 'Speech recognition is unavailable on this device.';
+    });
+
+    if (!isAvailable) {
+      return;
+    }
+
+    await _startListening();
+  }
+
+  Future<void> _startListening() async {
+    if (!_isAvailable) {
+      return;
+    }
+
+    setState(() {
+      _isListening = true;
+      _errorMessage = null;
+    });
+
+    await _speech.listen(
+      onResult: _handleResult,
+      listenMode: ListenMode.confirmation,
+      partialResults: true,
+      cancelOnError: true,
+    );
+  }
+
+  Future<void> _stopListening() async {
+    await _speech.stop();
+
+    if (!mounted) {
+      return;
+    }
+
+    setState(() {
+      _isListening = false;
+    });
+  }
+
+  void _handleResult(SpeechRecognitionResult result) {
+    if (!mounted) {
+      return;
+    }
+
+    setState(() {
+      _recognizedText = result.recognizedWords;
+    });
+  }
+
+  void _handleError(SpeechRecognitionError error) {
+    if (!mounted) {
+      return;
+    }
+
+    setState(() {
+      _isListening = false;
+      _errorMessage = error.errorMsg;
+    });
+  }
+
+  void _handleStatus(String status) {
+    if (!mounted) {
+      return;
+    }
+
+    setState(() {
+      _isListening = status == 'listening';
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      backgroundColor: AppColors.background,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(20.r),
+      ),
+      titlePadding: EdgeInsets.fromLTRB(20.w, 20.h, 20.w, 8.h),
+      contentPadding: EdgeInsets.fromLTRB(20.w, 0, 20.w, 12.h),
+      actionsPadding: EdgeInsets.fromLTRB(16.w, 0, 16.w, 16.h),
+      title: Text(
+        'Speak Now',
+        style: AppTextStyles.headingSM.copyWith(color: AppColors.headingText),
+      ),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 72.w,
+            height: 72.w,
+            decoration: BoxDecoration(
+              color: _isListening
+                  ? AppColors.primaryWithOpacity(0.12)
+                  : AppColors.secondarySurface,
+              shape: BoxShape.circle,
+            ),
+            child: Icon(
+              _isListening ? Icons.mic : Icons.mic_none_rounded,
+              color: _isListening ? AppColors.primary : AppColors.bodyText_light,
+              size: 32.sp,
+            ),
+          ),
+          SizedBox(height: 16.h),
+          Text(
+            _errorMessage ??
+                (_isListening
+                    ? 'Listening... say a word or phrase.'
+                    : 'Tap start to begin listening.'),
+            textAlign: TextAlign.center,
+            style: AppTextStyles.bodyMD.copyWith(
+              color: _errorMessage != null
+                  ? AppColors.error
+                  : AppColors.bodyText_light,
+            ),
+          ),
+          SizedBox(height: 16.h),
+          Container(
+            width: double.infinity,
+            constraints: BoxConstraints(minHeight: 96.h),
+            padding: EdgeInsets.all(12.w),
+            decoration: BoxDecoration(
+              color: AppColors.background,
+              borderRadius: BorderRadius.circular(12.r),
+              border: Border.all(color: AppColors.borderGrey, width: 1),
+            ),
+            child: Text(
+              _recognizedText.isEmpty
+                  ? 'Your speech will appear here.'
+                  : _recognizedText,
+              style: AppTextStyles.bodyLG.copyWith(
+                color: _recognizedText.isEmpty
+                    ? AppColors.hintText
+                    : AppColors.bodyText,
+              ),
+            ),
+          ),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: Text(
+            'Cancel',
+            style: AppTextStyles.bodyMD.copyWith(
+              color: AppColors.bodyText_light,
+            ),
+          ),
+        ),
+        TextButton(
+          onPressed: _isListening ? _stopListening : _startListening,
+          child: Text(
+            _isListening ? 'Stop' : 'Start',
+            style: AppTextStyles.bodyMD.copyWith(color: AppColors.primary),
+          ),
+        ),
+        ElevatedButton(
+          onPressed: _recognizedText.trim().isEmpty
+              ? null
+              : () => Navigator.of(context).pop(_recognizedText.trim()),
+          style: ElevatedButton.styleFrom(
+            backgroundColor: AppColors.primary,
+            foregroundColor: Colors.white,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(10.r),
+            ),
+          ),
+          child: const Text('Use Text'),
+        ),
+      ],
     );
   }
 }

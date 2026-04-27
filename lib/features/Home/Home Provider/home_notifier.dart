@@ -1,14 +1,34 @@
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_riverpod/legacy.dart';
 import 'package:ralamuli_translator/core/data/translation_entries.dart';
+import 'package:ralamuli_translator/core/database/dictionary_repository.dart';
+import 'package:ralamuli_translator/core/database/models/dictionary_entry.dart';
 import 'package:ralamuli_translator/features/Home/Model/home_model.dart';
+import 'package:ralamuli_translator/features/Setting/setting_notifier.dart';
 
 final translatorProvider =
     StateNotifierProvider<TranslatorNotifier, TranslatorState>(
-      (ref) => TranslatorNotifier(),
+      (ref) => TranslatorNotifier(ref),
     );
 
 class TranslatorNotifier extends StateNotifier<TranslatorState> {
-  TranslatorNotifier() : super(const TranslatorState());
+  TranslatorNotifier(this.ref)
+    : super(
+        TranslatorState(
+          sourceLanguage: ref.watch(settingsProvider).defaultLanguage,
+        ),
+      ) {
+    _repository = ref.watch(dictionaryRepositoryProvider);
+    // Listen to settings changes
+    ref.listen(settingsProvider, (previous, next) {
+      if (previous?.defaultLanguage != next.defaultLanguage) {
+        state = state.copyWith(sourceLanguage: next.defaultLanguage);
+      }
+    });
+  }
+
+  late final DictionaryRepository _repository;
+  final Ref ref;
 
   static const List<String> availableLanguages = AppLanguages.all;
 
@@ -29,15 +49,7 @@ class TranslatorNotifier extends StateNotifier<TranslatorState> {
   }
 
   void swapLanguages() {
-    state = _buildSyncedState(
-      previousState: state,
-      sourceLanguage: state.targetLanguage,
-      targetLanguage: state.sourceLanguage,
-      fallbackInputText: state.translatedText.isNotEmpty
-          ? state.translatedText
-          : state.inputText,
-      fallbackTranslatedText: state.inputText,
-    );
+    state = _buildSwappedState(state);
   }
 
   void openDropdown({required bool isSource}) {
@@ -48,28 +60,38 @@ class TranslatorNotifier extends StateNotifier<TranslatorState> {
     state = state.copyWith(isDropdownOpen: false);
   }
 
-  void selectLanguage(String language) {
-    var nextSourceLanguage = state.sourceLanguage;
-    var nextTargetLanguage = state.targetLanguage;
-
-    if (state.isSelectingSource) {
-      if (language == state.targetLanguage) {
-        nextTargetLanguage = state.sourceLanguage;
-      }
-      nextSourceLanguage = language;
-    } else {
-      if (language == state.sourceLanguage) {
-        nextSourceLanguage = state.targetLanguage;
-      }
-      nextTargetLanguage = language;
+  Future<void> selectLanguage(String language) async {
+    if (state.isSelectingSource && language == state.targetLanguage) {
+      state = _buildSwappedState(state, closeDropdown: true);
+      return;
     }
 
-    state = _buildSyncedState(
-      previousState: state,
-      sourceLanguage: nextSourceLanguage,
-      targetLanguage: nextTargetLanguage,
-      closeDropdown: true,
+    if (!state.isSelectingSource && language == state.sourceLanguage) {
+      state = _buildSwappedState(state, closeDropdown: true);
+      return;
+    }
+
+    if (state.isSelectingSource) {
+      state = state.copyWith(
+        sourceLanguage: language,
+        inputText: '',
+        translatedText: '',
+        status: TranslationStatus.idle,
+        isDropdownOpen: false,
+      );
+      return;
+    }
+
+    state = state.copyWith(
+      targetLanguage: language,
+      translatedText: '',
+      status: TranslationStatus.idle,
+      isDropdownOpen: false,
     );
+
+    if (state.inputText.trim().isNotEmpty) {
+      await translate();
+    }
   }
 
   Future<void> translate() async {
@@ -78,81 +100,61 @@ class TranslatorNotifier extends StateNotifier<TranslatorState> {
 
     state = state.copyWith(status: TranslationStatus.loading);
 
-    await Future.delayed(const Duration(milliseconds: 450));
-
-    final entry = findTranslationEntry(
-      language: state.sourceLanguage,
-      text: input,
+    final entry = await _repository.searchEntry(
+      sourceLanguage: state.sourceLanguage,
+      input: input,
     );
 
     if (entry != null) {
       state = state.copyWith(
-        inputText: entry.textForLanguage(state.sourceLanguage),
-        translatedText: entry.textForLanguage(state.targetLanguage),
+        translatedText: _buildTranslatedText(
+          entry,
+          state.targetLanguage,
+          input,
+        ),
         status: TranslationStatus.success,
       );
       return;
     }
 
-    state = state.copyWith(
-      translatedText: '',
-      status: TranslationStatus.error,
-    );
+    state = state.copyWith(translatedText: '', status: TranslationStatus.error);
   }
 
-  TranslatorState _buildSyncedState({
-    required TranslatorState previousState,
-    required String sourceLanguage,
-    required String targetLanguage,
-    bool closeDropdown = false,
-    String? fallbackInputText,
-    String? fallbackTranslatedText,
-  }) {
-    final matchedEntry = _resolveCurrentEntry(previousState);
-
-    if (matchedEntry != null) {
-      return previousState.copyWith(
-        sourceLanguage: sourceLanguage,
-        targetLanguage: targetLanguage,
-        inputText: matchedEntry.textForLanguage(sourceLanguage),
-        translatedText: matchedEntry.textForLanguage(targetLanguage),
-        status: TranslationStatus.success,
-        isDropdownOpen: closeDropdown ? false : previousState.isDropdownOpen,
-      );
+  String _buildTranslatedText(
+    DictionaryEntry entry,
+    String targetLanguage,
+    String input,
+  ) {
+    final baseTranslation = entry.textForLanguage(targetLanguage);
+    if (entry.pos == 'phrase' &&
+        entry.textForLanguage(state.sourceLanguage).endsWith('...')) {
+      final prefixLength =
+          entry.textForLanguage(state.sourceLanguage).length - 3;
+      final extra = input.substring(prefixLength).trim();
+      return baseTranslation + (extra.isNotEmpty ? ' $extra' : '');
     }
+    return baseTranslation;
+  }
 
-    final nextInputText =
-        fallbackInputText ??
-        (sourceLanguage == previousState.sourceLanguage
-            ? previousState.inputText
-            : '');
+  TranslatorState _buildSwappedState(
+    TranslatorState previousState, {
+    bool closeDropdown = false,
+  }) {
+    final hasTranslation =
+        previousState.status == TranslationStatus.success &&
+        previousState.translatedText.trim().isNotEmpty;
 
     return previousState.copyWith(
-      sourceLanguage: sourceLanguage,
-      targetLanguage: targetLanguage,
-      inputText: nextInputText,
-      translatedText: fallbackTranslatedText ?? '',
-      status: TranslationStatus.idle,
+      sourceLanguage: previousState.targetLanguage,
+      targetLanguage: previousState.sourceLanguage,
+      inputText: hasTranslation
+          ? previousState.translatedText
+          : previousState.inputText,
+      translatedText: hasTranslation ? previousState.inputText : '',
+      status: hasTranslation
+          ? TranslationStatus.success
+          : TranslationStatus.idle,
       isDropdownOpen: closeDropdown ? false : previousState.isDropdownOpen,
-    );
-  }
-
-  TranslationEntry? _resolveCurrentEntry(TranslatorState currentState) {
-    final fromInput = findTranslationEntry(
-      language: currentState.sourceLanguage,
-      text: currentState.inputText,
-    );
-    if (fromInput != null) {
-      return fromInput;
-    }
-
-    if (currentState.translatedText.trim().isEmpty) {
-      return null;
-    }
-
-    return findTranslationEntry(
-      language: currentState.targetLanguage,
-      text: currentState.translatedText,
     );
   }
 }

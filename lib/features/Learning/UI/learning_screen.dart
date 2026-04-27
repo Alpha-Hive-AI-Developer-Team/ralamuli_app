@@ -52,7 +52,29 @@ class LearningModeScreen extends ConsumerWidget {
                     SizedBox(height: 12.h),
 
                     // ── Word Cards ────────────────────────────────────
-                    ...state.words.map((word) => _WordCard(word: word)),
+                    if (state.isLoading)
+                      Padding(
+                        padding: EdgeInsets.symmetric(vertical: 36.h),
+                        child: Center(
+                          child: CircularProgressIndicator(
+                            valueColor: AlwaysStoppedAnimation<Color>(
+                              AppColors.primary,
+                            ),
+                          ),
+                        ),
+                      )
+                    else if (state.errorMessage != null)
+                      Padding(
+                        padding: EdgeInsets.symmetric(vertical: 24.h),
+                        child: Text(
+                          state.errorMessage!,
+                          style: AppTextStyles.bodyLG.copyWith(
+                            color: AppColors.error,
+                          ),
+                        ),
+                      )
+                    else
+                      ...state.words.map((word) => _WordCard(word: word)),
                   ],
                 ),
               ),
