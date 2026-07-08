@@ -1,4 +1,4 @@
-package com.example.ralamuli_translator
+package com.truemessages.ralamulitranslator
 
 import io.flutter.embedding.android.FlutterActivity
 
