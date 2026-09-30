@@ -1,4 +1,5 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:ralamuli_translator/core/Utils/search_normalizer.dart';
 import 'package:ralamuli_translator/core/data/translation_entries.dart';
 import 'package:ralamuli_translator/core/database/dictionary_database.dart';
 import 'package:ralamuli_translator/core/database/models/dictionary_entry.dart';
@@ -14,6 +15,8 @@ final dictionaryInitializationProvider = FutureProvider<void>((ref) async {
 
 class DictionaryRepository {
   DictionaryRepository(this._database);
+
+  static const _minSubstringQueryLength = 3;
 
   final DictionaryDatabase _database;
 
@@ -32,27 +35,15 @@ class DictionaryRepository {
 
     final db = await _database.database;
     final sourceColumn = _dictionaryColumnFor(sourceLanguage);
-    final directMatch = await _searchDictionaryColumn(
+
+    final termMatch = await _searchTerms(
       db: db,
-      column: sourceColumn,
-      input: trimmedInput,
+      language: sourceColumn,
+      query: normalizeForSearch(trimmedInput),
     );
 
-    if (directMatch != null) {
-      return directMatch;
-    }
-
-    for (final table in _relatedTablesFor(sourceLanguage)) {
-      final relatedMatch = await _searchRelatedTable(
-        db: db,
-        tableName: table.tableName,
-        valueColumn: table.valueColumn,
-        input: trimmedInput,
-      );
-
-      if (relatedMatch != null) {
-        return relatedMatch;
-      }
+    if (termMatch != null) {
+      return termMatch;
     }
 
     // Search for phrase prefixes
@@ -87,57 +78,60 @@ class DictionaryRepository {
     return results.map(DictionaryEntry.fromMap).toList();
   }
 
-  Future<DictionaryEntry?> _searchDictionaryColumn({
+  /// Finds the best entry whose normalized search terms contain [query].
+  ///
+  /// Ranking: exact term match, then the query as the leading words of a
+  /// term, then as whole words inside a term, then as a partial-word prefix,
+  /// then anywhere. Ties prefer an entry's full text over its alternatives,
+  /// then the shortest term.
+  Future<DictionaryEntry?> _searchTerms({
     required Database db,
-    required String column,
-    required String input,
+    required String language,
+    required String query,
   }) async {
-    final results = await db.rawQuery(
-      '''
-      SELECT *
-      FROM dictionary
-      WHERE LOWER($column) LIKE LOWER(?)
-      ORDER BY
-        CASE
-          WHEN LOWER($column) = LOWER(?) THEN 0
-          WHEN LOWER($column) LIKE LOWER(?) THEN 1
-          ELSE 2
-        END,
-        LENGTH($column) ASC
-      LIMIT 1
-      ''',
-      ['%$input%', input, '$input%'],
-    );
-
-    if (results.isEmpty) {
+    if (query.isEmpty) {
       return null;
     }
 
-    return DictionaryEntry.fromMap(results.first);
-  }
-
-  Future<DictionaryEntry?> _searchRelatedTable({
-    required Database db,
-    required String tableName,
-    required String valueColumn,
-    required String input,
-  }) async {
+    // Normalized queries only contain [a-z0-9' ], so no LIKE escaping needed.
+    // Very short queries must match whole words to avoid random substrings.
+    final allowSubstring = query.length >= _minSubstringQueryLength;
     final results = await db.rawQuery(
       '''
       SELECT d.*
-      FROM dictionary d
-      INNER JOIN $tableName t ON t.word_id = d.id
-      WHERE LOWER(t.$valueColumn) LIKE LOWER(?)
+      FROM search_terms t
+      INNER JOIN dictionary d ON d.id = t.word_id
+      WHERE t.language = ?
+        AND (
+          t.term = ?
+          OR t.term LIKE ?
+          OR (' ' || t.term || ' ') LIKE ?
+          ${allowSubstring ? 'OR t.term LIKE ?' : ''}
+        )
       ORDER BY
         CASE
-          WHEN LOWER(t.$valueColumn) = LOWER(?) THEN 0
-          WHEN LOWER(t.$valueColumn) LIKE LOWER(?) THEN 1
-          ELSE 2
+          WHEN t.term = ? THEN 0
+          WHEN t.term LIKE ? THEN 1
+          WHEN (' ' || t.term || ' ') LIKE ? THEN 2
+          WHEN t.term LIKE ? THEN 3
+          ELSE 4
         END,
-        LENGTH(t.$valueColumn) ASC
+        t.rank ASC,
+        LENGTH(t.term) ASC,
+        d.id ASC
       LIMIT 1
       ''',
-      ['%$input%', input, '$input%'],
+      [
+        language,
+        query,
+        '$query %',
+        '% $query %',
+        if (allowSubstring) '%$query%',
+        query,
+        '$query %',
+        '% $query %',
+        '$query%',
+      ],
     );
 
     if (results.isEmpty) {
@@ -182,25 +176,4 @@ class DictionaryRepository {
         return 'english';
     }
   }
-
-  List<_RelatedTable> _relatedTablesFor(String language) {
-    switch (language) {
-      case AppLanguages.english:
-        return const [_RelatedTable('alt_meanings', 'meaning')];
-      case AppLanguages.ralamuli:
-        return const [
-          _RelatedTable('forms', 'form'),
-          _RelatedTable('variants', 'variant'),
-        ];
-      default:
-        return const [];
-    }
-  }
-}
-
-class _RelatedTable {
-  final String tableName;
-  final String valueColumn;
-
-  const _RelatedTable(this.tableName, this.valueColumn);
 }

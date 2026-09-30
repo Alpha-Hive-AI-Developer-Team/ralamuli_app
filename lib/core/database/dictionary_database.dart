@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:flutter/services.dart';
 import 'package:path/path.dart' as p;
+import 'package:ralamuli_translator/core/Utils/search_normalizer.dart';
 import 'package:sqflite/sqflite.dart';
 
 class DictionaryDatabase {
@@ -10,8 +11,16 @@ class DictionaryDatabase {
   static final DictionaryDatabase instance = DictionaryDatabase._();
 
   static const _databaseName = 'raramuri_dictionary.db';
-  static const _databaseVersion = 2;
+
+  /// Bump this whenever assets/data/raramuri_dictionary.json changes, otherwise
+  /// installed apps keep searching their previously seeded copy.
+  static const _databaseVersion = 3;
   static const _assetPath = 'assets/data/raramuri_dictionary.json';
+
+  /// Search term ranks: a match on an entry's full text beats a match on one
+  /// of its alternatives.
+  static const primaryRank = 0;
+  static const alternativeRank = 1;
 
   Database? _database;
 
@@ -65,28 +74,12 @@ class DictionaryDatabase {
     ''');
 
     await db.execute('''
-      CREATE TABLE forms (
+      CREATE TABLE search_terms (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        word_id INTEGER,
-        form TEXT,
-        FOREIGN KEY(word_id) REFERENCES dictionary(id)
-      );
-    ''');
-
-    await db.execute('''
-      CREATE TABLE variants (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        word_id INTEGER,
-        variant TEXT,
-        FOREIGN KEY(word_id) REFERENCES dictionary(id)
-      );
-    ''');
-
-    await db.execute('''
-      CREATE TABLE alt_meanings (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        word_id INTEGER,
-        meaning TEXT,
+        word_id INTEGER NOT NULL,
+        language TEXT NOT NULL,
+        term TEXT NOT NULL,
+        rank INTEGER NOT NULL,
         FOREIGN KEY(word_id) REFERENCES dictionary(id)
       );
     ''');
@@ -94,17 +87,13 @@ class DictionaryDatabase {
 
   Future<void> _createIndexes(Database db) async {
     await db.execute(
-      'CREATE INDEX IF NOT EXISTS idx_english ON dictionary(english);',
-    );
-    await db.execute(
-      'CREATE INDEX IF NOT EXISTS idx_spanish ON dictionary(spanish);',
-    );
-    await db.execute(
-      'CREATE INDEX IF NOT EXISTS idx_raramuri ON dictionary(raramuri);',
+      'CREATE INDEX IF NOT EXISTS idx_search_terms ON search_terms(language, term);',
     );
   }
 
   Future<void> _dropTables(Database db) async {
+    await db.execute('DROP TABLE IF EXISTS search_terms;');
+    // Tables from database version 2 and earlier.
     await db.execute('DROP TABLE IF EXISTS alt_meanings;');
     await db.execute('DROP TABLE IF EXISTS variants;');
     await db.execute('DROP TABLE IF EXISTS forms;');
@@ -131,9 +120,41 @@ class DictionaryDatabase {
     await db.transaction((txn) async {
       final batch = txn.batch();
 
+      void addSearchTerms(
+        int wordId,
+        String language,
+        Object? primary,
+        List<String> alternatives,
+      ) {
+        final isEnglish = language == 'english';
+        final ranks = <String, int>{};
+
+        if (primary is String) {
+          for (final key in searchKeysFor(primary, isEnglish: isEnglish)) {
+            ranks[key] = primaryRank;
+          }
+        }
+        for (final alternative in alternatives) {
+          for (final key in searchKeysFor(alternative, isEnglish: isEnglish)) {
+            ranks.putIfAbsent(key, () => alternativeRank);
+          }
+        }
+
+        ranks.forEach((term, rank) {
+          batch.insert('search_terms', {
+            'word_id': wordId,
+            'language': language,
+            'term': term,
+            'rank': rank,
+          });
+        });
+      }
+
+      var maxEntryId = 0;
       for (final item in entries) {
         final entry = item as Map<String, dynamic>;
         final wordId = entry['id'] as int;
+        if (wordId > maxEntryId) maxEntryId = wordId;
 
         batch.insert('dictionary', {
           'id': wordId,
@@ -145,35 +166,25 @@ class DictionaryDatabase {
           'note': entry['note'],
         });
 
-        for (final form in _stringList(entry['forms'])) {
-          batch.insert('forms', {
-            'word_id': wordId,
-            'form': form,
-          });
-        }
-
-        for (final variant in _stringList(entry['variants'])) {
-          batch.insert('variants', {
-            'word_id': wordId,
-            'variant': variant,
-          });
-        }
-
-        for (final meaning in _stringList(entry['alt_meanings'])) {
-          batch.insert('alt_meanings', {
-            'word_id': wordId,
-            'meaning': meaning,
-          });
-        }
+        addSearchTerms(wordId, 'english', entry['word'], [
+          ..._stringList(entry['alt_meanings']),
+        ]);
+        addSearchTerms(wordId, 'spanish', entry['spanish'], [
+          ..._stringList(entry['spanish_alt']),
+        ]);
+        addSearchTerms(wordId, 'raramuri', entry['raramuri'], [
+          ..._stringList(entry['variants']),
+          ..._stringList(entry['forms']),
+        ]);
       }
 
-      // Seed phrases
+      // Seed phrases after entries, offset past the largest entry id.
       for (final item in phrases) {
         final phrase = item as Map<String, dynamic>;
-        final phraseId = phrase['id'] as int;
+        final phraseId = (phrase['id'] as int) + maxEntryId;
 
         batch.insert('dictionary', {
-          'id': phraseId + 1000, // Offset to avoid ID conflicts
+          'id': phraseId,
           'english': phrase['meaning'],
           'spanish': phrase['spanish'],
           'raramuri': phrase['raramuri'],
@@ -181,6 +192,10 @@ class DictionaryDatabase {
           'tag': null,
           'note': null,
         });
+
+        addSearchTerms(phraseId, 'english', phrase['meaning'], const []);
+        addSearchTerms(phraseId, 'spanish', phrase['spanish'], const []);
+        addSearchTerms(phraseId, 'raramuri', phrase['raramuri'], const []);
       }
 
       await batch.commit(noResult: true);
